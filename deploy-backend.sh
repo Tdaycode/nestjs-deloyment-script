@@ -428,7 +428,7 @@ module.exports = {
       log_file: './logs/combined.log',
       time: true,
       // Node.js version and environment setup
-      interpreter: '${HOME}/.nvm/versions/node/v${NODE_VERSION}*/bin/node'
+      interpreter: 'node'
     }
   ]
 };
