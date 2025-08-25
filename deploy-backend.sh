@@ -461,9 +461,19 @@ EOF
 # Function to setup nginx
 setup_nginx() {
     log "Setting up Nginx configuration..."
-    
-    # Create nginx configuration
-    sudo tee "/etc/nginx/sites-available/$DOMAIN_NAME" > /dev/null << EOF
+
+    TMP_CONF="/tmp/$DOMAIN_NAME.conf"
+
+    # --- Ensure global rate limit zone exists ---
+    # Create /etc/nginx/conf.d/limits.conf if not already there
+    LIMITS_CONF="/etc/nginx/conf.d/limits.conf"
+    if ! grep -q "limit_req_zone" "$LIMITS_CONF" 2>/dev/null; then
+        echo "⚙️ Adding global rate limit zone..."
+        echo 'limit_req_zone $binary_remote_addr zone=api:10m rate=10r/s;' | sudo tee "$LIMITS_CONF" > /dev/null
+    fi
+
+    # --- Build site config in /tmp ---
+    cat > "$TMP_CONF" << EOF
 server {
     listen 80;
     server_name $DOMAIN_NAME;
@@ -474,9 +484,6 @@ server {
     add_header X-Content-Type-Options "nosniff" always;
     add_header Referrer-Policy "no-referrer-when-downgrade" always;
     add_header Content-Security-Policy "default-src 'self' http: https: data: blob: 'unsafe-inline'" always;
-    
-    # Rate limiting
-    limit_req_zone \$binary_remote_addr zone=api:10m rate=10r/s;
     
     # API routes
     location $API_PREFIX {
@@ -501,7 +508,7 @@ server {
 EOF
 
     if [ -n "$FRONTEND_DOMAIN" ]; then
-        cat >> "/etc/nginx/sites-available/$DOMAIN_NAME" << EOF
+        cat >> "$TMP_CONF" << EOF
         add_header Access-Control-Allow-Origin "https://$FRONTEND_DOMAIN" always;
         add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS" always;
         add_header Access-Control-Allow-Headers "Origin, X-Requested-With, Content-Type, Accept, Authorization" always;
@@ -520,7 +527,7 @@ EOF
 EOF
     fi
 
-    cat >> "/etc/nginx/sites-available/$DOMAIN_NAME" << EOF
+    cat >> "$TMP_CONF" << EOF
     }
     
     # Health check endpoint
@@ -557,20 +564,22 @@ EOF
 }
 EOF
 
-    # Enable the site
+    # --- Move config into nginx and enable it ---
+    sudo mv "$TMP_CONF" "/etc/nginx/sites-available/$DOMAIN_NAME"
     sudo ln -sf "/etc/nginx/sites-available/$DOMAIN_NAME" "/etc/nginx/sites-enabled/"
-    
-    # Test nginx configuration
+
+    # --- Test nginx configuration ---
     if ! sudo nginx -t; then
         error "Nginx configuration test failed"
         exit 1
     fi
     
-    # Reload nginx
+    # --- Reload nginx ---
     sudo systemctl reload nginx
     
     log "Nginx configuration completed ✓"
 }
+
 
 # Function to setup SSL with Let's Encrypt
 setup_ssl() {
